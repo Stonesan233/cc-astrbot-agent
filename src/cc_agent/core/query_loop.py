@@ -15,18 +15,23 @@ MVP 阶段简化说明：
         → 调用 Claude API（流式 SSE）
         → 收集文本输出（yield 给调用方）
         → 收集 tool_use 块（累积 input_json_delta）
-        → 执行工具 → 结果塞回 messages → 继续循环
+        → 构建 ToolUseContext → 执行工具 → 结果塞回 messages → 继续循环
         → 模型 end_turn 或达到轮次上限 → 结束
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 import uuid
-from typing import AsyncIterator, Optional
+from typing import AsyncIterator, Callable, Optional
 
 from ..services.api import ClaudeAPIClient
 from ..tools.registry import ToolRegistry
+from .tool_use_context import ToolUseContext
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -79,6 +84,7 @@ class QueryLoop:
             model=model,
         )
         self.model = model
+        self.project_root = project_root
         self.tool_registry = tool_registry or ToolRegistry(project_root=project_root)
 
     # ---- 主入口 ------------------------------------------------------------
@@ -107,8 +113,11 @@ class QueryLoop:
             {"role": "user", "content": task},
         ]
 
+        # 构建 cancel 信号，供 ToolUseContext 使用
+        abort_event = asyncio.Event()
+
         # ---- 多轮工具调用循环 ----
-        for _turn in range(self.MAX_TURNS):
+        for turn in range(self.MAX_TURNS):
             # 本轮收集的状态
             text_parts: list[str] = []
             tool_use_blocks: list[dict] = []
@@ -205,17 +214,39 @@ class QueryLoop:
             assistant_content.extend(tool_use_blocks)
             messages.append({"role": "assistant", "content": assistant_content})
 
+            # ---- 构建 ToolUseContext（每轮刷新） ----
+            context = ToolUseContext(
+                project_root=self.project_root,
+                tool_registry=self.tool_registry,
+                messages=list(messages),  # 快照，避免工具修改原始列表
+                abort_event=abort_event,
+                current_persona=persona,
+                on_progress=lambda msg: logger.debug("[tool progress] %s", msg),
+                turn=turn,
+            )
+
             # ---- 执行工具，收集 tool_result ----
             tool_results: list[dict] = []
             for block in tool_use_blocks:
+                tool_name = block["name"]
+                tool_input = block.get("input", {})
+                tool_use_id = block.get("id", str(uuid.uuid4()))
+
                 result_str = await self._execute_tool(
-                    block["name"], block.get("input", {}),
+                    tool_name=tool_name,
+                    tool_input=tool_input,
+                    context=context,
                 )
                 tool_results.append({
                     "type": "tool_result",
-                    "tool_use_id": block.get("id", str(uuid.uuid4())),
+                    "tool_use_id": tool_use_id,
                     "content": result_str,
                 })
+
+                # 检查是否被取消
+                if abort_event.is_set():
+                    yield "\n[工具执行已被取消]\n"
+                    return
 
             # 将工具结果作为 user 消息追加
             messages.append({"role": "user", "content": tool_results})
@@ -241,30 +272,89 @@ class QueryLoop:
             tool_descriptions="\n".join(descriptions),
         )
 
-    async def _execute_tool(self, tool_name: str, tool_input: dict) -> str:
+    async def _execute_tool(
+        self,
+        tool_name: str,
+        tool_input: dict,
+        context: ToolUseContext,
+    ) -> str:
         """
         执行单个工具并返回结果字符串。
 
+        流程：
+        1. 通过 ToolRegistry 查找工具
+        2. 输入校验（validate_input）
+        3. 调用 tool.call(args, context)
+        4. 格式化结果（处理 error / stdout / dict）
+
         Args:
             tool_name: 工具名称
-            tool_input: 工具输入参数
+            tool_input: 工具输入参数（已从 SSE 累积解析）
+            context: 工具执行上下文
 
         Returns:
-            str: 工具执行结果的字符串表示
+            str: 工具执行结果字符串（将作为 tool_result content 回传 API）
         """
+        # ---- 1. 查找工具 ----
         tool = self.tool_registry.find_tool(tool_name)
         if tool is None:
-            return f"错误：工具 '{tool_name}' 未注册"
+            available = sorted(t.name for t in self.tool_registry.get_all_tools())
+            logger.warning("工具未注册: %s (可用: %s)", tool_name, available)
+            return f"错误：工具 '{tool_name}' 未注册。可用工具: {available}"
 
+        logger.info("执行工具: %s", tool_name)
+
+        # ---- 2. 输入校验 ----
         try:
-            result = await tool.call(args=tool_input)
-            if isinstance(result, dict):
-                if result.get("error"):
-                    return f"工具执行失败: {result['error']}"
-                stdout = result.get("stdout", "")
-                if stdout:
-                    return stdout
-                return json.dumps(result, ensure_ascii=False, indent=2)
-            return str(result)
+            validation = await tool.validate_input(tool_input, context)
+            if not validation.result:
+                msg = validation.message or "输入校验失败"
+                logger.warning("工具 %s 输入校验失败: %s", tool_name, msg)
+                return f"输入校验失败: {msg}"
         except Exception as e:
+            logger.warning("工具 %s 输入校验异常（跳过校验）: %s", tool_name, e)
+
+        # ---- 3. 执行工具 ----
+        try:
+            result = await tool.call(
+                args=tool_input,
+                context=context,
+                on_progress=context.on_progress,
+            )
+        except asyncio.CancelledError:
+            logger.info("工具 %s 被取消", tool_name)
+            return "工具执行已被取消"
+        except Exception as e:
+            logger.exception("工具 %s 执行异常", tool_name)
             return f"工具执行异常: {e}"
+
+        # ---- 4. 格式化结果 ----
+        return self._format_tool_result(tool_name, result)
+
+    @staticmethod
+    def _format_tool_result(tool_name: str, result) -> str:
+        """
+        将工具返回值格式化为字符串。
+
+        tool.call() 返回 dict，可能包含 error / stdout 等字段。
+        """
+        if not isinstance(result, dict):
+            return str(result)
+
+        # 有 error 字段 → 失败
+        error = result.get("error")
+        if error:
+            return f"工具执行失败: {error}"
+
+        # 有 stdout 字段 → 优先返回 stdout
+        stdout = result.get("stdout", "")
+        if stdout:
+            # 截断超长输出，避免 API token 浪费
+            max_len = 50_000
+            if len(stdout) > max_len:
+                truncated = stdout[:max_len]
+                return truncated + f"\n... (输出已截断，原始长度 {len(stdout)} 字符)"
+            return stdout
+
+        # 否则返回完整 JSON
+        return json.dumps(result, ensure_ascii=False, indent=2)
