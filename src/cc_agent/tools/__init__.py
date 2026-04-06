@@ -1,7 +1,7 @@
 """tools — Agent 工具集"""
 
 from .base import BaseTool, ToolResult, ValidationResult
-from .registry import ToolRegistry, ToolNotFoundError
+from .registry import ToolRegistry
 from .bash import BashTool
 from .file_read import FileReadTool
 from .file_edit import FileEditTool
@@ -14,7 +14,6 @@ __all__ = [
     "ToolResult",
     "ValidationResult",
     "ToolRegistry",
-    "ToolNotFoundError",
     "BashTool",
     "FileReadTool",
     "FileEditTool",
