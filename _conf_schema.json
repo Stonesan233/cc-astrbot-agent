@@ -1,0 +1,60 @@
+{
+  "claude_api_key": {
+    "type": "string",
+    "description": "Claude API 密钥",
+    "hint": "Anthropic API Key，以 sk-ant- 开头。必填。",
+    "default": ""
+  },
+  "base_url": {
+    "type": "string",
+    "description": "Claude API 端点 URL",
+    "hint": "自定义端点，留空使用 https://api.anthropic.com",
+    "default": ""
+  },
+  "model": {
+    "type": "string",
+    "description": "模型名称",
+    "hint": "默认使用 claude-3-7-sonnet-20250219",
+    "default": "claude-3-7-sonnet-20250219"
+  },
+  "project_root": {
+    "type": "string",
+    "description": "项目根目录",
+    "hint": "Agent 操作的工作目录，例如 /home/user/my-project",
+    "default": ""
+  },
+  "enable_auto_apply": {
+    "type": "bool",
+    "description": "是否自动应用文件修改",
+    "hint": "启用后 Agent 写入文件后直接生效，否则需要手动确认",
+    "default": false
+  },
+  "max_tool_turns": {
+    "type": "int",
+    "description": "最大工具调用轮次",
+    "hint": "防止 Agent 无限循环，默认 5 轮",
+    "default": 5,
+    "slider": {
+      "min": 1,
+      "max": 20,
+      "step": 1
+    }
+  },
+  "command_timeout": {
+    "type": "int",
+    "description": "命令执行超时（秒）",
+    "hint": "Bash 命令最大执行时间，超时自动终止",
+    "default": 60,
+    "slider": {
+      "min": 10,
+      "max": 300,
+      "step": 10
+    }
+  },
+  "enable_streaming": {
+    "type": "bool",
+    "description": "启用流式输出",
+    "hint": "启用后 Agent 响应会逐段发送，关闭则等待完整结果再发送",
+    "default": true
+  }
+}
