@@ -20,7 +20,7 @@
   "project_root": {
     "type": "string",
     "description": "项目根目录",
-    "hint": "Agent 操作的工作目录，例如 /home/user/my-project",
+    "hint": "Agent 操作的工作目录，例如 C:/Users/me/my-project",
     "default": ""
   },
   "enable_auto_apply": {
