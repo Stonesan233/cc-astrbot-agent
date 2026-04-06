@@ -11,6 +11,7 @@ from .core.query_loop import QueryLoop
 from .core.query_config import QueryConfig
 from .bridge.astrbot_bridge import IAstrBotBridge, IPersonaCallback
 from .tools.registry import ToolRegistry
+from .tools.base import ToolResult
 
 
 class ClaudeCodeAgent:
@@ -70,8 +71,10 @@ class ClaudeCodeAgent:
         return await tool.call({"path": "."})
 
     async def read_file(self, file_path: str) -> str:
-        tool = self.tool_registry.get_tool("file_read")
-        result = await tool.call({"file_path": file_path})
+        tool = self.tool_registry.get_tool("read_file")
+        result = await tool.call({"path": file_path})
+        if isinstance(result, ToolResult):
+            return (result.data or {}).get("content", "") if result.error is None else f"Error: {result.error}"
         return result.get("content", "")
 
     # ... 后续会继续添加 write_file, execute_command 等
