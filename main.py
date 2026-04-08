@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import sys
 import time
 import traceback
@@ -215,7 +216,33 @@ class ClaudeCodePlugin(Star):
             yield event.plain_result("抱歉，/cc 命令仅限管理员使用。")
             return
 
+        # DEBUG: 打印原始 args 和消息内容，定位解析问题
         raw_args = args.strip()
+        # 尝试从 event 获取完整消息文本作为备用
+        msg_text = ""
+        try:
+            msg_text = event.message_str if hasattr(event, "message_str") else ""
+        except Exception:
+            pass
+        logger.info(
+            f"[{PLUGIN_NAME}] cc_command | args={repr(raw_args)} | "
+            f"msg_text={repr(msg_text[:200])}"
+        )
+
+        # 如果 GreedyStr 没有捕获到完整参数，从消息原文中提取
+        if raw_args and " " not in raw_args and msg_text:
+            # args 只有子命令没有参数（如 "read" 但没有文件路径）
+            # 尝试从完整消息中提取
+            # 消息格式: "cc read file.txt" 或 "/cc read file.txt"（msg_text 不含前导 /）
+            cc_match = re.search(r'/?cc\s+(.*)', msg_text, re.IGNORECASE)
+            if cc_match:
+                full_args = cc_match.group(1).strip()
+                if len(full_args) > len(raw_args):
+                    logger.info(
+                        f"[{PLUGIN_NAME}] 补全参数 | raw_args={repr(raw_args)} | "
+                        f"full_args={repr(full_args)}"
+                    )
+                    raw_args = full_args
 
         # 无参数 → 显示帮助
         if not raw_args:
