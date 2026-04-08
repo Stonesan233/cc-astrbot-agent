@@ -237,42 +237,44 @@ class ClaudeCodePlugin(Star):
             return
 
         if sub == "scan":
-            yield event.chain_result(await self._handle_scan(event))
+            yield event.plain_result(await self._handle_scan(event))
             return
 
         if sub == "read":
             if not rest:
                 yield event.plain_result("用法: /cc read <文件路径>")
                 return
-            yield event.chain_result(await self._handle_read(event, rest.strip()))
+            yield event.plain_result(await self._handle_read(event, rest.strip()))
             return
 
         if sub == "write":
             if not rest:
                 yield event.plain_result("用法: /cc write <文件路径> <内容>")
                 return
-            yield event.chain_result(await self._handle_write(event, rest.strip()))
+            yield event.plain_result(await self._handle_write(event, rest.strip()))
             return
 
         if sub in ("run", "exec", "bash"):
             if not rest:
                 yield event.plain_result("用法: /cc run <shell 命令>")
                 return
-            yield event.chain_result(await self._handle_run(event, rest.strip()))
+            yield event.plain_result(await self._handle_run(event, rest.strip()))
             return
 
         # ---- 默认：作为任务交给 Agent ----
-        yield event.chain_result(await self._handle_task(event, raw_args))
+        yield event.plain_result(await self._handle_task(event, raw_args))
 
     # ---- 子命令处理器 ------------------------------------------------------
 
-    async def _handle_scan(self, event: AstrMessageEvent) -> MessageChain:
+    async def _handle_scan(self, event: AstrMessageEvent) -> str:
         """扫描项目结构"""
         persona_label = await self._get_persona_id_async(event)
         logger.info(f"[{PLUGIN_NAME}] scan | persona={persona_label}")
         try:
             agent = self._ensure_agent()
             result = await agent.scan_project()
+            if isinstance(result, dict) and result.get("error"):
+                return f"项目扫描失败: {result['error']}"
             files = result.get("files", [])
             msg = f"项目扫描完成，共发现 {len(files)} 个文件。"
             if files:
@@ -280,12 +282,12 @@ class ClaudeCodePlugin(Star):
                 if len(files) > 20:
                     preview += f"\n  ... 等共 {len(files)} 个文件"
                 msg += f"\n\n{preview}"
-            return MessageChain().message(msg)
+            return msg
         except Exception as e:
             logger.warning(f"[{PLUGIN_NAME}] scan 失败: {e}")
-            return MessageChain().message(f"项目扫描失败: {e}")
+            return f"项目扫描失败: {e}"
 
-    async def _handle_read(self, event: AstrMessageEvent, file_path: str) -> MessageChain:
+    async def _handle_read(self, event: AstrMessageEvent, file_path: str) -> str:
         """读取文件"""
         persona_label = await self._get_persona_id_async(event)
         logger.info(f"[{PLUGIN_NAME}] read {file_path} | persona={persona_label}")
@@ -293,22 +295,22 @@ class ClaudeCodePlugin(Star):
             agent = self._ensure_agent()
             content = await agent.read_file(file_path)
             if not content:
-                return MessageChain().message(f"文件为空或不存在: {file_path}")
+                return f"文件为空或不存在: {file_path}"
             # 截断超长内容
             max_chars = 4000
             if len(content) > max_chars:
                 content = content[:max_chars] + f"\n... (已截断，原始 {len(content)} 字符)"
-            return MessageChain().message(f"📄 {file_path}:\n\n{content}")
+            return f"{file_path}:\n\n{content}"
         except Exception as e:
             logger.warning(f"[{PLUGIN_NAME}] read 失败: {e}")
-            return MessageChain().message(f"读取文件失败: {e}")
+            return f"读取文件失败: {e}"
 
-    async def _handle_write(self, event: AstrMessageEvent, args_str: str) -> MessageChain:
+    async def _handle_write(self, event: AstrMessageEvent, args_str: str) -> str:
         """写入文件：/cc write <路径> <内容>"""
         persona_label = await self._get_persona_id_async(event)
         parts = args_str.split(maxsplit=1)
         if len(parts) < 2:
-            return MessageChain().message("用法: /cc write <文件路径> <文件内容>")
+            return "用法: /cc write <文件路径> <文件内容>"
 
         file_path, content = parts[0], parts[1]
         logger.info(f"[{PLUGIN_NAME}] write {file_path} ({len(content)} chars) | persona={persona_label}")
@@ -316,13 +318,13 @@ class ClaudeCodePlugin(Star):
             agent = self._ensure_agent()
             result = await agent.write_file(file_path, content)
             if isinstance(result, dict) and result.get("error"):
-                return MessageChain().message(f"写入失败: {result['error']}")
-            return MessageChain().message(f"✅ 已写入: {file_path} ({len(content)} 字符)")
+                return f"写入失败: {result['error']}"
+            return f"已写入: {file_path} ({len(content)} 字符)"
         except Exception as e:
             logger.warning(f"[{PLUGIN_NAME}] write 失败: {e}")
-            return MessageChain().message(f"写入文件失败: {e}")
+            return f"写入文件失败: {e}"
 
-    async def _handle_run(self, event: AstrMessageEvent, command: str) -> MessageChain:
+    async def _handle_run(self, event: AstrMessageEvent, command: str) -> str:
         """执行 Bash 命令：/cc run <命令>"""
         persona_label = await self._get_persona_id_async(event)
         timeout = self.config.get("command_timeout", 60)
@@ -340,7 +342,7 @@ class ClaudeCodePlugin(Star):
                 error = result.get("error")
 
                 if error:
-                    return MessageChain().message(f"命令执行错误: {error}")
+                    return f"命令执行错误: {error}"
 
                 # 截断输出
                 if len(stdout) > 3000:
@@ -352,91 +354,124 @@ class ClaudeCodePlugin(Star):
                 if stderr.strip():
                     stderr_preview = stderr[:1000]
                     msg += f"\n\n stderr:\n{stderr_preview.strip()}"
-                return MessageChain().message(msg)
+                return msg
 
-            return MessageChain().message(str(result))
+            return str(result)
         except Exception as e:
             logger.warning(f"[{PLUGIN_NAME}] run 失败: {e}")
-            return MessageChain().message(f"命令执行失败: {e}")
+            return f"命令执行失败: {e}"
 
-    async def _handle_task(self, event: AstrMessageEvent, task: str) -> MessageChain:
+    async def _handle_task(self, event: AstrMessageEvent, task: str) -> str:
         """
         执行 Agent 任务（核心入口）
 
         调用 agent.run_task() 进行多轮工具调用，
         收集流式输出后返回给用户。
-        支持 enable_streaming 配置。
         """
         persona_id = await self._get_persona_id_async(event)
         persona_label = _PERSONA_LABELS.get(persona_id, persona_id)
         logger.info(
             f"[{PLUGIN_NAME}] 任务开始 | persona={persona_label} | "
-            f"task={task[:80]}..."
+            f"task={task[:80]}"
         )
 
         start = time.monotonic()
         enable_streaming = self.config.get("enable_streaming", True)
 
+        # ---- 1. 确保 Agent 可用 ----
         try:
             agent = self._ensure_agent()
-
-            # ---- 流式模式 ----
-            if enable_streaming and hasattr(event, "send_streaming"):
-                output_parts: list[str] = []
-                try:
-                    async for chunk in agent.run_task(task=task, persona=persona_id):
-                        output_parts.append(chunk)
-                        # 尝试流式发送中间结果
-                        if len(output_parts) % 5 == 0:
-                            try:
-                                await event.send(
-                                    MessageChain().message("".join(output_parts[-5:]))
-                                )
-                            except Exception:
-                                pass  # 平台不支持多段发送则忽略
-
-                    full_output = "".join(output_parts)
-                except Exception:
-                    full_output = "".join(output_parts) if output_parts else ""
-
-            # ---- 非流式模式 ----
-            else:
-                output_parts: list[str] = []
-                async for chunk in agent.run_task(task=task, persona=persona_id):
-                    output_parts.append(chunk)
-                full_output = "".join(output_parts)
-
-            elapsed = time.monotonic() - start
-
-            if not full_output.strip():
-                full_output = "（Agent 未返回任何输出）"
-
-            # 添加耗时标记
-            result_text = f"{full_output}\n\n---\n⏱ 耗时 {elapsed:.1f}s"
-
-            logger.info(
-                f"[{PLUGIN_NAME}] 任务完成 | persona={persona_label} | "
-                f"耗时={elapsed:.1f}s | 输出={len(full_output)}字符"
-            )
-
-            return MessageChain().message(result_text)
-
         except RuntimeError as e:
-            logger.error(f"[{PLUGIN_NAME}] Agent 错误: {e}")
-            return MessageChain().message(f"❌ {e}")
+            logger.error(f"[{PLUGIN_NAME}] Agent 不可用: {e}")
+            return f"Agent 未就绪: {e}"
+
+        # ---- 2. 验证 API Key ----
+        if not agent.api_key:
+            logger.warning(f"[{PLUGIN_NAME}] API Key 未配置，无法执行任务")
+            return "API Key 未配置。请在插件设置中填写 claude_api_key。"
+
+        # ---- 3. 记录调用参数 ----
+        logger.info(
+            f"[{PLUGIN_NAME}] -> agent.run_task() | "
+            f"model={agent.model} | root={agent.project_root} | "
+            f"streaming={enable_streaming}"
+        )
+
+        output_parts: list[str] = []
+        full_output = ""
+
+        try:
+            async for chunk in agent.run_task(task=task, persona=persona_id):
+                output_parts.append(chunk)
+
+                # 流式发送中间结果（每 10 个 chunk 发一次）
+                if enable_streaming and len(output_parts) % 10 == 0:
+                    batch = "".join(output_parts[-10:])
+                    if batch.strip():
+                        try:
+                            await event.send(batch)
+                        except Exception:
+                            pass  # 平台不支持多段发送则忽略
+
+            full_output = "".join(output_parts)
+            logger.info(
+                f"[{PLUGIN_NAME}] <- run_task() 正常结束 | "
+                f"chunks={len(output_parts)} | chars={len(full_output)}"
+            )
 
         except asyncio.CancelledError:
+            full_output = "".join(output_parts) if output_parts else ""
             logger.info(f"[{PLUGIN_NAME}] 任务被取消 | persona={persona_label}")
-            return MessageChain().message("任务已被取消。")
+            if not full_output.strip():
+                return "任务已被取消。"
 
         except Exception as e:
+            full_output = "".join(output_parts) if output_parts else ""
+            tb = traceback.format_exc()
             logger.error(
-                f"[{PLUGIN_NAME}] 任务异常 | persona={persona_label}\n"
-                f"{traceback.format_exc()}"
+                f"[{PLUGIN_NAME}] run_task() 异常 | persona={persona_label}\n{tb}"
             )
-            return MessageChain().message(
-                f"❌ 任务执行异常: {e}\n\n请检查插件配置和日志获取详细信息。"
-            )
+
+            # 分类错误信息
+            err_name = type(e).__name__
+            err_msg = str(e)
+
+            if "ConnectionReset" in err_name or "ConnectionError" in err_name:
+                hint = "API 连接被重置。可能是端点 URL 格式不对，或服务不可用。"
+            elif "ConnectError" in err_name:
+                hint = "无法连接到 API 端点。请检查 base_url 配置和网络。"
+            elif "Timeout" in err_name:
+                hint = "API 请求超时。请检查网络连接或增加超时时间。"
+            elif "401" in err_msg or "Unauthorized" in err_msg or "authentication" in err_msg.lower():
+                hint = "API Key 无效或已过期。请检查 claude_api_key 配置。"
+            elif "403" in err_msg:
+                hint = "API 访问被拒绝。请检查权限和配额。"
+            elif "404" in err_msg:
+                hint = "API 端点不存在。请检查 base_url 和 model 配置。"
+            elif "429" in err_msg:
+                hint = "API 请求频率过高。请稍后重试。"
+            elif "500" in err_msg or "502" in err_msg or "503" in err_msg:
+                hint = "API 服务器错误。请稍后重试。"
+            else:
+                hint = "请检查插件配置和日志获取详细信息。"
+
+            error_detail = f"{full_output}\n\n---\n" if full_output.strip() else ""
+            error_detail += f"任务执行异常 ({err_name}): {err_msg}\n{hint}"
+            return error_detail
+
+        elapsed = time.monotonic() - start
+
+        if not full_output.strip():
+            full_output = "（Agent 未返回任何输出）"
+
+        result_text = f"{full_output}\n\n---\n耗时 {elapsed:.1f}s"
+
+        logger.info(
+            f"[{PLUGIN_NAME}] 任务完成 | persona={persona_label} | "
+            f"耗时={elapsed:.1f}s | 输出={len(full_output)}字符"
+        )
+
+        return result_text
 
     # ---- 帮助 / 状态 -------------------------------------------------------
 
