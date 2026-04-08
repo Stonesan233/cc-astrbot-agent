@@ -60,6 +60,7 @@ class ToolRegistry:
         from .file_write import FileWriteTool
         from .glob import GlobTool
         from .grep import GrepTool
+        from .patch import PatchTool
         from .scan_project import ScanProjectTool
 
         self.register_tools([
@@ -69,6 +70,7 @@ class ToolRegistry:
             FileWriteTool(project_root=self.project_root),
             GlobTool(project_root=self.project_root),
             GrepTool(project_root=self.project_root),
+            PatchTool(project_root=self.project_root),
             ScanProjectTool(project_root=self.project_root),
         ])
 
