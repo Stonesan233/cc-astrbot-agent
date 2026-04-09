@@ -76,7 +76,7 @@ class QueryLoop:
     5. 直到模型 end_turn 或达到最大轮次
     """
 
-    # 最大工具调用轮次（防无限循环）
+    # 最大工具调用轮次（防无限循环），可通过 __init__ 覆盖
     MAX_TURNS = 5
 
     def __init__(
@@ -86,6 +86,7 @@ class QueryLoop:
         base_url: Optional[str] = None,
         tool_registry: Optional[ToolRegistry] = None,
         project_root: str = "",
+        max_turns: int = 5,
     ):
         self.api_client = ClaudeAPIClient(
             api_key=api_key,
@@ -97,13 +98,16 @@ class QueryLoop:
         self.base_url = (base_url or "https://api.anthropic.com").rstrip("/")
         self.project_root = project_root
         self.tool_registry = tool_registry or ToolRegistry(project_root=project_root)
+        self.max_turns = max_turns
 
-        # GLM 兼容模式检测
-        # 如果 base_url 是 Anthropic 兼容端点（如智谱的 /api/anthropic），
-        # 则使用 Claude 标准模式；只有 base_url 不是 Anthropic 格式时才用 OpenAI 兼容模式
+        # GLM/MiniMax 兼容模式检测
+        # MiniMax API 是 OpenAI 兼容格式（/v1/chat/completions），需要走 GLM 模式
+        # 如果 base_url 是 Anthropic 兼容端点（如智谱的 /api/anthropic），则使用 Claude 标准模式
+        # 只有 base_url 不是 Anthropic 格式时才用 OpenAI 兼容模式
         is_anthropic_endpoint = "anthropic" in self.base_url.lower()
-        self._is_glm = "glm" in self.model.lower() and not is_anthropic_endpoint
-        self._is_glm_anthropic = "glm" in self.model.lower() and is_anthropic_endpoint
+        _model_lower = self.model.lower()
+        self._is_glm = ("glm" in _model_lower or "minimax" in _model_lower) and not is_anthropic_endpoint
+        self._is_glm_anthropic = ("glm" in _model_lower or "minimax" in _model_lower) and is_anthropic_endpoint
         logger.info(
             f"QueryLoop initialized | model={self.model} | "
             f"is_glm={self._is_glm} | is_glm_anthropic={self._is_glm_anthropic} | "
@@ -273,9 +277,9 @@ class QueryLoop:
         """
         logger.info(f"[GLM Mode] _query_glm started | task={task[:100]}")
 
-        for turn in range(self.MAX_TURNS):
+        for turn in range(self.max_turns):
             logger.info(
-                f"[GLM Mode] === Turn {turn + 1}/{self.MAX_TURNS} ==="
+                f"[GLM Mode] === Turn {turn + 1}/{self.max_turns} ==="
             )
 
             # ---- 调用 API ----
@@ -460,7 +464,7 @@ class QueryLoop:
         logger.info(f"Entering {mode_label} standard mode (Anthropic API format)")
 
         # ---- 多轮工具调用循环 ----
-        for turn in range(self.MAX_TURNS):
+        for turn in range(self.max_turns):
             # 本轮收集的状态
             text_parts: list[str] = []
             tool_use_blocks: list[dict] = []
@@ -474,7 +478,7 @@ class QueryLoop:
 
             logger.info(
                 f"Calling Claude API with model: {self.model} | "
-                f"turn={turn + 1}/{self.MAX_TURNS}"
+                f"turn={turn + 1}/{self.max_turns}"
             )
 
             # ---- 流式调用 API，逐事件处理 ----

@@ -25,6 +25,7 @@ class ClaudeCodeAgent:
         claude_api_key: Optional[str] = None,
         model: str = "claude-3-7-sonnet-20250219",
         base_url: Optional[str] = None,
+        max_turns: int = 5,
     ):
         self.project_root = Path(project_root).resolve()
         self.api_key = claude_api_key
@@ -40,6 +41,7 @@ class ClaudeCodeAgent:
             base_url=base_url,
             tool_registry=self.tool_registry,
             project_root=str(self.project_root),
+            max_turns=max_turns,
         )
 
         self.current_session_id = str(uuid.uuid4())
