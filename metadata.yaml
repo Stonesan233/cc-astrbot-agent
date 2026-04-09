@@ -1,0 +1,5 @@
+name: astrbot_plugin_claude_code_custom
+desc: Claude Code Agent 核心（纯 Python 重写），提供编程 Agent 能力
+version: v0.1.0
+author: Stonesan
+repo: https://github.com/Stonesan233/cc-astrbot-agent
