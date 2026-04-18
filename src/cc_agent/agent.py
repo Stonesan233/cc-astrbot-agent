@@ -1,11 +1,17 @@
 """
 ClaudeCodeAgent — 纯净的 Coding Agent 核心
-不包含任何人格逻辑，只提供功能。由 AstrBot Persona 层调用。
+
+不包含任何人格逻辑，只提供多轮工具调用能力。
+人格设定由上层（AstrBot Persona 或其他插件）负责。
+
+对应原版 Claude Code 的核心 Agent 入口。
 """
 
-from typing import AsyncIterator, Optional
-from pathlib import Path
+from __future__ import annotations
+
 import uuid
+from pathlib import Path
+from typing import AsyncIterator, Optional
 
 from .core.query_loop import QueryLoop
 from .bridge.astrbot_bridge import IAstrBotBridge, IPersonaCallback
@@ -16,7 +22,13 @@ from .tools.base import ToolResult
 class ClaudeCodeAgent:
     """
     纯净的 Coding Agent 核心
-    不包含任何人格逻辑，只提供功能
+
+    职责：
+    - 管理 QueryLoop 和 ToolRegistry 的生命周期
+    - 提供流式任务执行入口 (run_task)
+    - 提供直接工具调用接口 (scan_project / read_file / write_file / execute_command)
+
+    不包含任何 Persona 逻辑。
     """
 
     def __init__(
@@ -46,7 +58,7 @@ class ClaudeCodeAgent:
 
         self.current_session_id = str(uuid.uuid4())
 
-    # ---- 主入口 ------------------------------------------------------------
+    # ---- 主入口 --------------------------------------------------------
 
     async def run_task(
         self,
@@ -56,32 +68,39 @@ class ClaudeCodeAgent:
         callback: Optional[IPersonaCallback] = None,
     ) -> AsyncIterator[str]:
         """
-        AstrBot Persona 调用 Agent 的统一入口。
-        persona 参数仅用于记录，不影响 Agent 内部逻辑。
+        流式任务执行入口。
 
-        流式 yield 模型的文本输出（包含多轮工具调用）。
+        persona 参数仅用于日志标记，不影响 Agent 行为。
+        yield 模型的文本输出（包含多轮工具调用的全部文本）。
         """
         async for chunk in self.query_loop.query(task=task, persona=persona):
             yield chunk
 
-    # ---- 预留接口（供 AstrBot 直接调用工具） --------------------------------
+    # ---- 直接工具调用接口（绕过 LLM） ------------------------------------
 
-    async def scan_project(self) -> dict:
-        """供 AstrBot 直接调用"""
+    async def scan_project(self, **kwargs) -> dict:
+        """直接调用项目扫描工具"""
         tool = self.tool_registry.get_tool("scan_project")
-        return await tool.call({"path": "."})
+        return await tool.call({"path": ".", **kwargs})
 
-    async def read_file(self, file_path: str) -> str:
+    async def read_file(self, file_path: str, **kwargs) -> str:
+        """直接调用文件读取工具"""
         tool = self.tool_registry.get_tool("read_file")
-        result = await tool.call({"path": file_path})
+        result = await tool.call({"path": file_path, **kwargs})
         if isinstance(result, ToolResult):
-            return (result.data or {}).get("content", "") if result.error is None else f"Error: {result.error}"
+            return (
+                (result.data or {}).get("content", "")
+                if result.error is None
+                else f"Error: {result.error}"
+            )
         return result.get("content", "")
 
-    async def write_file(self, file_path: str, content: str) -> dict:
+    async def write_file(self, file_path: str, content: str, **kwargs) -> dict:
+        """直接调用文件写入工具"""
         tool = self.tool_registry.get_tool("write_file")
-        return await tool.call({"path": file_path, "content": content})
+        return await tool.call({"path": file_path, "content": content, **kwargs})
 
-    async def execute_command(self, command: str, timeout: int = 60) -> dict:
+    async def execute_command(self, command: str, timeout: int = 60, **kwargs) -> dict:
+        """直接调用 Bash 工具"""
         tool = self.tool_registry.get_tool("bash")
-        return await tool.call({"command": command, "timeout": timeout})
+        return await tool.call({"command": command, "timeout": timeout, **kwargs})

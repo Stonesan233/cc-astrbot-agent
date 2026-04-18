@@ -4,8 +4,10 @@ BaseTool — 所有工具的抽象基类
 对应原版 src/Tool.ts 的 Tool<Input, Output, Progress> 类型
 """
 
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
-from typing import Any, Optional, Callable, Awaitable
+from typing import Any, Optional, Callable
 from pydantic import BaseModel
 
 
@@ -47,17 +49,22 @@ class BaseTool(ABC):
         """Pydantic 输入模型类"""
 
     @abstractmethod
-    async def call(self, args: dict, context: Any = None, on_progress: Optional[Callable] = None) -> dict:
+    async def call(
+        self,
+        args: dict,
+        context: Any = None,
+        on_progress: Optional[Callable] = None,
+    ) -> dict:
         """
         执行工具
 
         Args:
             args: 工具输入参数（已通过 input_schema 校验）
-            context: ToolUseContext（MVP 阶段简化为 Any）
+            context: ToolUseContext
             on_progress: 进度回调
 
         Returns:
-            dict: 工具结果（包含 data/error）
+            dict: 工具结果
         """
 
     @abstractmethod
@@ -80,13 +87,19 @@ class BaseTool(ABC):
         """是否启用（默认是）"""
         return True
 
-    async def validate_input(self, input_data: dict, context: Any = None) -> ValidationResult:
+    async def validate_input(
+        self, input_data: dict, context: Any = None
+    ) -> ValidationResult:
         """校验输入（默认通过）"""
         return ValidationResult(result=True)
 
     def user_facing_name(self, input_data: Optional[dict] = None) -> str:
         """用户可见的工具名称"""
         return self.name
+
+    def get_brief_description(self) -> str:
+        """获取工具简短描述（用于 system prompt 工具列表）"""
+        return (self.__class__.__doc__ or self.name).strip().split("\n")[0]
 
     def map_tool_result_to_block(self, content: Any, tool_use_id: str) -> dict:
         """将工具结果映射为 API tool_result block"""
